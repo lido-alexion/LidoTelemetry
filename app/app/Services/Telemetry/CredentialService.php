@@ -82,6 +82,41 @@ class CredentialService
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    public function rotateIngestionCredential(int $credentialId, User $actor): array
+    {
+        $credential = TelemetryIngestionCredential::query()->findOrFail($credentialId);
+
+        $credential->is_active = false;
+        $credential->revoked_at = now();
+        $credential->save();
+
+        $this->audit->log('ingestion_credential.rotated', $actor->id, 'ingestion_credential', (string) $credential->id);
+
+        $rawToken = $this->generateRawToken('lt_ing_');
+
+        $replacement = TelemetryIngestionCredential::query()->create([
+            'product_id' => $credential->product_id,
+            'environment_id' => $credential->environment_id,
+            'name' => $credential->name,
+            'token_hash' => $this->hashToken($rawToken),
+            'token_prefix' => substr($rawToken, 0, 16),
+            'is_active' => true,
+        ]);
+
+        $this->audit->log('ingestion_credential.created', $actor->id, 'ingestion_credential', (string) $replacement->id, [
+            'rotated_from' => $credential->id,
+        ]);
+
+        return [
+            'credential' => $this->ingestionCredentialPayload($replacement),
+            'token' => $rawToken,
+            'revoked_credential_id' => $credential->id,
+        ];
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     public function listApiTokens(User $actor): array
@@ -126,7 +161,6 @@ class CredentialService
     public function revokeApiToken(int $tokenId, User $actor): void
     {
         $token = TelemetryApiToken::query()
-            ->where('user_id', $actor->id)
             ->where('id', $tokenId)
             ->firstOrFail();
 
@@ -135,6 +169,47 @@ class CredentialService
         $token->save();
 
         $this->audit->log('api_token.revoked', $actor->id, 'api_token', (string) $token->id);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function rotateApiToken(int $tokenId, User $actor): array
+    {
+        $token = TelemetryApiToken::query()
+            ->where('id', $tokenId)
+            ->firstOrFail();
+
+        $token->is_active = false;
+        $token->revoked_at = now();
+        $token->save();
+
+        $this->audit->log('api_token.rotated', $actor->id, 'api_token', (string) $token->id);
+
+        $rawToken = $this->generateRawToken('lt_api_');
+
+        $replacement = TelemetryApiToken::query()->create([
+            'user_id' => $token->user_id,
+            'name' => $token->name,
+            'token_hash' => $this->hashToken($rawToken),
+            'token_prefix' => substr($rawToken, 0, 16),
+            'role' => $token->role,
+            'scopes' => $token->scopes,
+            'product_ids' => $token->product_ids,
+            'environment_keys' => $token->environment_keys,
+            'is_active' => true,
+            'expires_at' => $token->expires_at,
+        ]);
+
+        $this->audit->log('api_token.created', $actor->id, 'api_token', (string) $replacement->id, [
+            'rotated_from' => $token->id,
+        ]);
+
+        return [
+            'token' => $this->apiTokenPayload($replacement),
+            'plain_text_token' => $rawToken,
+            'revoked_token_id' => $token->id,
+        ];
     }
 
     public function resolveIngestionCredential(string $rawToken): ?TelemetryIngestionCredential

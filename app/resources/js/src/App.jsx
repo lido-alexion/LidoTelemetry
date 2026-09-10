@@ -7,10 +7,15 @@ import LoginPage from './pages/LoginPage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
 import DashboardPage from './pages/DashboardPage';
 import ExplorerPage from './pages/ExplorerPage';
+import ExportPage from './pages/ExportPage';
+import SavedAnalysesPage from './pages/SavedAnalysesPage';
+import CustomDashboardsPage from './pages/CustomDashboardsPage';
 import ProductsPage from './pages/admin/ProductsPage';
 import CredentialsPage from './pages/admin/CredentialsPage';
 import UsersPage from './pages/admin/UsersPage';
 import InvitesPage from './pages/admin/InvitesPage';
+import DeletionsPage from './pages/admin/DeletionsPage';
+import AuditPage from './pages/admin/AuditPage';
 
 function AppLayout({ children }) {
     return (
@@ -56,11 +61,16 @@ export default function App() {
             <Route path="/latency" element={<ProtectedLayout><DashboardPage slug="latency-performance" title="Latency & Performance" /></ProtectedLayout>} />
             <Route path="/ops" element={<ProtectedLayout><DashboardPage slug="operational-health" title="Operational Health" /></ProtectedLayout>} />
             <Route path="/explorer" element={<ProtectedLayout><ExplorerPage /></ProtectedLayout>} />
+            <Route path="/export" element={<ProtectedLayout><ExportPage /></ProtectedLayout>} />
+            <Route path="/saved-analyses" element={<ProtectedLayout><SavedAnalysesPage /></ProtectedLayout>} />
+            <Route path="/dashboards/custom" element={<ProtectedLayout><CustomDashboardsPage /></ProtectedLayout>} />
 
             <Route path="/admin/products" element={<AdminLayout><ProductsPage /></AdminLayout>} />
             <Route path="/admin/credentials" element={<AdminLayout><CredentialsPage /></AdminLayout>} />
             <Route path="/admin/users" element={<AdminLayout><UsersPage /></AdminLayout>} />
             <Route path="/admin/invites" element={<AdminLayout><InvitesPage /></AdminLayout>} />
+            <Route path="/admin/deletions" element={<AdminLayout><DeletionsPage /></AdminLayout>} />
+            <Route path="/admin/audit" element={<AdminLayout><AuditPage /></AdminLayout>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

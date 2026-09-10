@@ -3,6 +3,7 @@
 namespace App\Services\Telemetry;
 
 use App\Models\TelemetryView;
+use App\Models\TelemetryViewDurationSummary;
 use Carbon\Carbon;
 
 class ViewMaterializationService
@@ -24,7 +25,7 @@ class ViewMaterializationService
             $eventType === 'navigation.view_started' => $this->handleViewStarted($event),
             $eventType === 'navigation.view_ended' => $this->handleViewEnded($event),
             str_starts_with($eventType, 'navigation.visibility_') => $this->handleVisibility($event),
-            $eventType === 'navigation.heartbeat' => $this->handleHeartbeat($event),
+            $eventType === 'navigation.heartbeat', $eventType === 'session.heartbeat' => $this->handleHeartbeat($event),
             default => null,
         };
     }
@@ -91,6 +92,8 @@ class ViewMaterializationService
         $snapshot['_visibility'] = 'ended';
         $view->metadata_snapshot = $snapshot;
         $view->save();
+
+        $this->upsertDurationSummary($view);
     }
 
     /**
@@ -176,5 +179,22 @@ class ViewMaterializationService
         }
 
         return Carbon::parse($value);
+    }
+
+    protected function upsertDurationSummary(TelemetryView $view): void
+    {
+        TelemetryViewDurationSummary::query()->updateOrCreate(
+            ['view_instance_id' => $view->view_instance_id],
+            [
+                'product_id' => $view->product_id,
+                'environment' => $view->environment,
+                'view_name' => $view->view_name,
+                'active_duration_ms' => $view->active_duration_ms,
+                'wall_duration_ms' => $view->wall_duration_ms,
+                'is_complete' => $view->is_complete,
+                'duration_estimated' => $view->duration_estimated,
+                'summary_date' => $view->ended_at?->toDateString() ?? $view->started_at->toDateString(),
+            ],
+        );
     }
 }

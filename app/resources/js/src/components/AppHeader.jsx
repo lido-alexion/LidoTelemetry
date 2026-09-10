@@ -13,6 +13,9 @@ const NAV_ITEMS = [
     { to: '/latency', label: 'Latency' },
     { to: '/ops', label: 'Ops' },
     { to: '/explorer', label: 'Explorer' },
+    { to: '/export', label: 'Export' },
+    { to: '/saved-analyses', label: 'Saved Analyses' },
+    { to: '/dashboards/custom', label: 'Dashboards' },
 ];
 
 const ADMIN_ITEMS = [
@@ -20,6 +23,8 @@ const ADMIN_ITEMS = [
     { to: '/admin/credentials', label: 'Credentials' },
     { to: '/admin/users', label: 'Users' },
     { to: '/admin/invites', label: 'Invites' },
+    { to: '/admin/deletions', label: 'Deletions' },
+    { to: '/admin/audit', label: 'Audit' },
 ];
 
 export default function AppHeader() {

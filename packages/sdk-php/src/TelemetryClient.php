@@ -8,12 +8,6 @@ use DateTimeImmutable;
 use RuntimeException;
 use Throwable;
 
-/**
- * Async PHP SDK client for Lido Telemetry ingestion.
- *
- * Business requests never block on network delivery — payloads are queued
- * durably and flushed by a background worker or shutdown hook.
- */
 class TelemetryClient
 {
     private string $endpoint;
@@ -26,6 +20,8 @@ class TelemetryClient
 
     private ?string $userId = null;
 
+    private ?string $anonymousId = null;
+
     private ?string $sessionId = null;
 
     private ?string $correlationId = null;
@@ -33,7 +29,21 @@ class TelemetryClient
     /** @var array<string, mixed> */
     private array $applicationContext = [];
 
+    /** @var array<string, mixed> */
+    private array $sessionContext = [];
+
+    /** @var array<string, mixed> */
+    private array $viewContext = [];
+
+    /** @var string[] */
+    private array $forbiddenMetadataKeys = [
+        'password', 'token', 'secret', 'api_key', 'authorization',
+        'body', 'request_body', 'response_body', 'note', 'prompt', 'search_text',
+    ];
+
     private bool $flushRegistered = false;
+
+    private ?string $linkedAnonymousId = null;
 
     /** @var callable|null */
     private $onDiagnostic = null;
@@ -60,6 +70,10 @@ class TelemetryClient
             ? $options['application_context']
             : [];
 
+        if (isset($options['forbidden_metadata_keys']) && is_array($options['forbidden_metadata_keys'])) {
+            $this->forbiddenMetadataKeys = $options['forbidden_metadata_keys'];
+        }
+
         if (isset($options['on_diagnostic']) && is_callable($options['on_diagnostic'])) {
             $this->onDiagnostic = $options['on_diagnostic'];
         }
@@ -69,12 +83,28 @@ class TelemetryClient
 
     public function setUserId(?string $userId): void
     {
+        if ($userId !== null && $this->anonymousId !== null && $this->linkedAnonymousId === null) {
+            $this->linkedAnonymousId = $this->anonymousId;
+            $this->trackEvent('identity.linked', [
+                'anonymous_id' => $this->anonymousId,
+                'user_id' => $userId,
+            ]);
+        }
+
         $this->userId = $userId;
+        $this->sessionContext['user_id'] = $userId;
+    }
+
+    public function setAnonymousId(?string $anonymousId): void
+    {
+        $this->anonymousId = $anonymousId;
+        $this->sessionContext['anonymous_id'] = $anonymousId;
     }
 
     public function setSessionId(?string $sessionId): void
     {
         $this->sessionId = $sessionId;
+        $this->sessionContext['session_id'] = $sessionId;
     }
 
     public function setCorrelationId(?string $correlationId): void
@@ -91,6 +121,22 @@ class TelemetryClient
     }
 
     /**
+     * @param  array<string, mixed>  $context
+     */
+    public function setSessionContext(array $context): void
+    {
+        $this->sessionContext = $context;
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    public function setViewContext(array $context): void
+    {
+        $this->viewContext = $context;
+    }
+
+    /**
      * @param  array<string, mixed>  $metadata
      */
     public function trackEvent(string $eventType, array $metadata = [], ?string $eventId = null): void
@@ -103,9 +149,10 @@ class TelemetryClient
             'occurred_at' => $this->now(),
             'category' => $category,
             'user_id' => $this->userId,
+            'anonymous_id' => $this->anonymousId,
             'session_id' => $this->sessionId,
             'correlation_id' => $this->correlationId,
-            'metadata' => $this->mergeMetadata($metadata),
+            'metadata' => $this->resolveMetadata($metadata),
         ]);
     }
 
@@ -119,6 +166,7 @@ class TelemetryClient
         array $dimensions = [],
     ): void {
         $this->enqueue('metrics', [
+            'id' => $this->generateId(),
             'name' => $name,
             'type' => $type,
             'value' => $value,
@@ -126,7 +174,7 @@ class TelemetryClient
             'user_id' => $this->userId,
             'session_id' => $this->sessionId,
             'correlation_id' => $this->correlationId,
-            'dimensions' => $this->mergeMetadata($dimensions),
+            'dimensions' => $this->resolveMetadata($dimensions),
         ]);
     }
 
@@ -141,6 +189,7 @@ class TelemetryClient
         array $metadata = [],
     ): void {
         $this->enqueue('logs', [
+            'id' => $this->generateId(),
             'severity' => $severity,
             'message' => $message,
             'service' => $service,
@@ -149,7 +198,7 @@ class TelemetryClient
             'user_id' => $this->userId,
             'session_id' => $this->sessionId,
             'correlation_id' => $this->correlationId,
-            'metadata' => $this->mergeMetadata($metadata),
+            'metadata' => $this->resolveMetadata($metadata),
         ]);
     }
 
@@ -179,13 +228,11 @@ class TelemetryClient
             'user_id' => $this->userId,
             'session_id' => $this->sessionId,
             'correlation_id' => $this->correlationId,
-            'attributes' => $this->mergeMetadata($attributes),
+            'attributes' => $this->resolveMetadata($attributes),
         ]);
     }
 
     /**
-     * Flush queued payloads to the ingestion API.
-     *
      * @return array{delivered: int, failed: int}
      */
     public function flush(): array
@@ -383,9 +430,38 @@ class TelemetryClient
      * @param  array<string, mixed>  $metadata
      * @return array<string, mixed>
      */
-    private function mergeMetadata(array $metadata): array
+    private function resolveMetadata(array $metadata): array
     {
-        return array_merge($this->applicationContext, $metadata);
+        $merged = array_merge($this->applicationContext, $this->sessionContext, $this->viewContext, $metadata);
+
+        return $this->filterMetadata($merged);
+    }
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     * @return array<string, mixed>
+     */
+    private function filterMetadata(array $metadata): array
+    {
+        $filtered = [];
+
+        foreach ($metadata as $key => $value) {
+            $lower = strtolower((string) $key);
+            $blocked = false;
+
+            foreach ($this->forbiddenMetadataKeys as $forbidden) {
+                if (str_contains($lower, strtolower($forbidden))) {
+                    $blocked = true;
+                    break;
+                }
+            }
+
+            if (! $blocked) {
+                $filtered[$key] = $value;
+            }
+        }
+
+        return $filtered;
     }
 
     private function now(): string

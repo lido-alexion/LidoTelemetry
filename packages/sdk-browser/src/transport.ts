@@ -5,38 +5,37 @@ export interface TransportOptions {
   ingestionToken: string;
 }
 
+type MetricPayload = Record<string, unknown>;
+type LogPayload = Record<string, unknown>;
+type SpanPayload = Record<string, unknown>;
+
 export class Transport {
-  private readonly eventsUrl: string;
-  private readonly remoteConfigUrl: string;
+  private readonly baseUrl: string;
   private readonly ingestionToken: string;
 
   constructor(options: TransportOptions) {
-    const base = options.endpoint.replace(/\/$/, '');
-    this.eventsUrl = `${base}/ingest/events`;
-    this.remoteConfigUrl = `${base}/remote-config`;
+    this.baseUrl = options.endpoint.replace(/\/$/, '');
     this.ingestionToken = options.ingestionToken;
   }
 
   async sendEvents(events: TelemetryEvent[]): Promise<void> {
-    if (events.length === 0) {
-      return;
-    }
+    await this.post('/ingest/events', { events });
+  }
 
-    const response = await fetch(this.eventsUrl, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({ events }),
-      keepalive: events.length === 1,
-    });
+  async sendMetrics(metrics: MetricPayload[]): Promise<void> {
+    await this.post('/ingest/metrics', { metrics });
+  }
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`Telemetry delivery failed (${response.status}): ${body}`);
-    }
+  async sendLogs(logs: LogPayload[]): Promise<void> {
+    await this.post('/ingest/logs', { logs });
+  }
+
+  async sendTraces(spans: SpanPayload[]): Promise<void> {
+    await this.post('/ingest/traces', { spans });
   }
 
   async fetchRemoteConfig(): Promise<Record<string, unknown>> {
-    const response = await fetch(this.remoteConfigUrl, {
+    const response = await fetch(`${this.baseUrl}/remote-config`, {
       method: 'GET',
       headers: this.headers(),
     });
@@ -47,6 +46,20 @@ export class Transport {
 
     const json = (await response.json()) as { data?: Record<string, unknown> };
     return json.data ?? {};
+  }
+
+  private async post(path: string, body: Record<string, unknown>): Promise<void> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      keepalive: true,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Telemetry delivery failed (${response.status}): ${text}`);
+    }
   }
 
   private headers(): Record<string, string> {

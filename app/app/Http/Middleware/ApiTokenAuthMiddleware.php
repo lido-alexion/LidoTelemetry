@@ -18,6 +18,13 @@ class ApiTokenAuthMiddleware
     {
         $sessionUser = Auth::guard('web')->user();
 
+        if (! $sessionUser instanceof User) {
+            $sanctumUser = $request->user('sanctum');
+            if ($sanctumUser instanceof User) {
+                $sessionUser = $sanctumUser;
+            }
+        }
+
         if ($sessionUser instanceof User) {
             $request->setUserResolver(fn () => $sessionUser);
 
@@ -72,10 +79,6 @@ class ApiTokenAuthMiddleware
             return response()->json(['message' => 'Account is inactive.'], 403);
         }
 
-        if ($user->isAdmin()) {
-            return $next($request);
-        }
-
         foreach ($scopes as $scope) {
             if (! $this->sessionUserHasScope($user, $scope)) {
                 return response()->json(['message' => 'Insufficient permissions.'], 403);
@@ -88,8 +91,9 @@ class ApiTokenAuthMiddleware
     protected function sessionUserHasScope(User $user, string $scope): bool
     {
         return match ($scope) {
-            'events:read', 'analytics:read' => $user->isAnalyst(),
-            'exports:create' => $user->isAnalyst(),
+            'events:read' => $user->canReadEvents(),
+            'analytics:read' => $user->canReadAnalytics(),
+            'exports:create' => $user->canExport(),
             'products:manage', 'credentials:manage' => $user->canManage(),
             default => false,
         };

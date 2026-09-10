@@ -95,6 +95,30 @@ export default function CredentialsPage() {
         }
     };
 
+    const rotateIngestion = async (id) => {
+        setMessage('');
+        setError('');
+        try {
+            const res = await api.post(`/admin/credentials/ingestion/${id}/rotate`);
+            setMessage(`Ingestion token rotated: ${res.data.data?.token || '(copy from response)'}`);
+            await loadAll();
+        } catch (err) {
+            setError(getApiErrorMessage(err));
+        }
+    };
+
+    const rotateApiToken = async (id) => {
+        setMessage('');
+        setError('');
+        try {
+            const res = await api.post(`/admin/credentials/api-tokens/${id}/rotate`);
+            setMessage(`API token rotated: ${res.data.data?.plain_text_token || '(copy from response)'}`);
+            await loadAll();
+        } catch (err) {
+            setError(getApiErrorMessage(err));
+        }
+    };
+
     const toggleScope = (scope) => {
         setTokenForm((current) => ({
             ...current,
@@ -236,15 +260,24 @@ export default function CredentialsPage() {
                                 <td>{item.environment?.environment_key || item.environment_id}</td>
                                 <td><code>{item.token_prefix}</code></td>
                                 <td>{item.is_active ? 'Active' : 'Revoked'}</td>
-                                <td>
+                                <td className="text-nowrap">
                                     {item.is_active && (
-                                        <button
-                                            type="button"
-                                            className="btn btn-sm btn-outline-danger"
-                                            onClick={() => revokeIngestion(item.id)}
-                                        >
-                                            Revoke
-                                        </button>
+                                        <>
+                                            <button
+                                                type="button"
+                                                className="btn btn-sm btn-outline-info me-2"
+                                                onClick={() => rotateIngestion(item.id)}
+                                            >
+                                                Rotate
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn btn-sm btn-outline-danger"
+                                                onClick={() => revokeIngestion(item.id)}
+                                            >
+                                                Revoke
+                                            </button>
+                                        </>
                                     )}
                                 </td>
                             </tr>
@@ -272,15 +305,24 @@ export default function CredentialsPage() {
                                 <td>{item.role}</td>
                                 <td className="small">{(item.scopes || []).join(', ')}</td>
                                 <td><code>{item.token_prefix}</code></td>
-                                <td>
+                                <td className="text-nowrap">
                                     {item.is_active && (
-                                        <button
-                                            type="button"
-                                            className="btn btn-sm btn-outline-danger"
-                                            onClick={() => revokeApiToken(item.id)}
-                                        >
-                                            Revoke
-                                        </button>
+                                        <>
+                                            <button
+                                                type="button"
+                                                className="btn btn-sm btn-outline-info me-2"
+                                                onClick={() => rotateApiToken(item.id)}
+                                            >
+                                                Rotate
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn btn-sm btn-outline-danger"
+                                                onClick={() => revokeApiToken(item.id)}
+                                            >
+                                                Revoke
+                                            </button>
+                                        </>
                                     )}
                                 </td>
                             </tr>

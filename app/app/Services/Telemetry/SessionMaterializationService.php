@@ -53,9 +53,25 @@ class SessionMaterializationService
             $session->anonymous_id = $event['anonymous_id'];
         }
 
-        if (($event['event_type'] ?? '') === 'navigation.session_ended') {
+        $eventType = (string) ($event['event_type'] ?? '');
+
+        if ($eventType === 'navigation.session_ended') {
             $session->ended_at = $occurredAt;
             $session->is_complete = true;
+        }
+
+        if ($eventType === 'identity.linked') {
+            $metadata = $event['metadata'] ?? [];
+            $linkedUserId = $event['user_id'] ?? $metadata['user_id'] ?? null;
+            $linkedAnonymousId = $event['anonymous_id'] ?? $metadata['anonymous_id'] ?? null;
+
+            if ($linkedUserId) {
+                $session->user_id = $linkedUserId;
+            }
+
+            if ($linkedAnonymousId) {
+                $session->anonymous_id = $linkedAnonymousId;
+            }
         }
 
         $session->save();

@@ -6,9 +6,13 @@ use App\Models\TelemetryDailyAggregate;
 use App\Models\TelemetryEvent;
 use App\Models\TelemetryHourlyAggregate;
 use App\Models\TelemetryLog;
+use App\Models\TelemetryMetadataKey;
 use App\Models\TelemetryMetric;
 use App\Models\TelemetryProductEnvironment;
+use App\Models\TelemetrySession;
 use App\Models\TelemetryTraceSpan;
+use App\Models\TelemetryView;
+use App\Models\TelemetryViewDurationSummary;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -25,6 +29,10 @@ class RetentionService
     {
         $counts = [
             'raw_deleted' => 0,
+            'sessions_deleted' => 0,
+            'views_deleted' => 0,
+            'view_summaries_deleted' => 0,
+            'metadata_keys_deleted' => 0,
             'hourly_deleted' => 0,
             'daily_deleted' => 0,
         ];
@@ -41,11 +49,17 @@ class RetentionService
             $rawCutoff = now()->subDays($rawDays);
             $aggregateCutoff = now()->subDays($aggregateDays);
 
-            $counts['raw_deleted'] += $this->purgeRaw(
+            $rawPurgeCounts = $this->purgeRaw(
                 $environment->product_id,
                 $environment->environment_key,
                 $rawCutoff,
             );
+
+            $counts['raw_deleted'] += $rawPurgeCounts['raw'];
+            $counts['sessions_deleted'] += $rawPurgeCounts['sessions'];
+            $counts['views_deleted'] += $rawPurgeCounts['views'];
+            $counts['view_summaries_deleted'] += $rawPurgeCounts['view_summaries'];
+            $counts['metadata_keys_deleted'] += $rawPurgeCounts['metadata_keys'];
 
             $counts['hourly_deleted'] += $this->purgeHourly(
                 $environment->product_id,
@@ -65,36 +79,68 @@ class RetentionService
         return $counts;
     }
 
-    protected function purgeRaw(string $productId, string $environment, Carbon $cutoff): int
+    /**
+     * @return array<string, int>
+     */
+    protected function purgeRaw(string $productId, string $environment, Carbon $cutoff): array
     {
         return DB::transaction(function () use ($productId, $environment, $cutoff) {
-            $deleted = 0;
+            $counts = [
+                'raw' => 0,
+                'sessions' => 0,
+                'views' => 0,
+                'view_summaries' => 0,
+                'metadata_keys' => 0,
+            ];
 
-            $deleted += TelemetryEvent::query()
+            $counts['raw'] += TelemetryEvent::query()
                 ->where('product_id', $productId)
                 ->where('environment', $environment)
                 ->where('occurred_at', '<', $cutoff)
                 ->delete();
 
-            $deleted += TelemetryMetric::query()
+            $counts['raw'] += TelemetryMetric::query()
                 ->where('product_id', $productId)
                 ->where('environment', $environment)
                 ->where('occurred_at', '<', $cutoff)
                 ->delete();
 
-            $deleted += TelemetryLog::query()
+            $counts['raw'] += TelemetryLog::query()
                 ->where('product_id', $productId)
                 ->where('environment', $environment)
                 ->where('occurred_at', '<', $cutoff)
                 ->delete();
 
-            $deleted += TelemetryTraceSpan::query()
+            $counts['raw'] += TelemetryTraceSpan::query()
                 ->where('product_id', $productId)
                 ->where('environment', $environment)
                 ->where('started_at', '<', $cutoff)
                 ->delete();
 
-            return $deleted;
+            $counts['view_summaries'] += TelemetryViewDurationSummary::query()
+                ->where('product_id', $productId)
+                ->where('environment', $environment)
+                ->where('summary_date', '<', $cutoff->toDateString())
+                ->delete();
+
+            $counts['views'] += TelemetryView::query()
+                ->where('product_id', $productId)
+                ->where('environment', $environment)
+                ->where('started_at', '<', $cutoff)
+                ->delete();
+
+            $counts['sessions'] += TelemetrySession::query()
+                ->where('product_id', $productId)
+                ->where('environment', $environment)
+                ->where('started_at', '<', $cutoff)
+                ->delete();
+
+            $counts['metadata_keys'] += TelemetryMetadataKey::query()
+                ->where('product_id', $productId)
+                ->where('last_seen_at', '<', $cutoff)
+                ->delete();
+
+            return $counts;
         });
     }
 

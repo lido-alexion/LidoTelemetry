@@ -18,8 +18,9 @@ class ExportController extends Controller
     {
         $validated = $request->validate([
             'format' => ['required', 'string', 'in:csv,json,ndjson'],
-            'signal_family' => ['required', 'string', 'in:events,metrics,logs,traces'],
-            'product_ids' => ['required', 'array', 'min:1'],
+            'export_type' => ['required', 'string', 'in:raw,aggregates,sessions,views,saved_analysis'],
+            'signal_family' => ['nullable', 'string', 'in:events,metrics,logs,traces'],
+            'product_ids' => ['required_unless:export_type,saved_analysis', 'array', 'min:1'],
             'product_ids.*' => ['uuid'],
             'environment_keys' => ['nullable', 'array'],
             'environment_keys.*' => ['string', 'max:64'],
@@ -27,11 +28,21 @@ class ExportController extends Controller
             'time_range.start' => ['required', 'date'],
             'time_range.end' => ['required', 'date', 'after:time_range.start'],
             'filters' => ['nullable', 'array'],
+            'group_by' => ['nullable', 'array'],
+            'aggregations' => ['nullable', 'array'],
+            'analysis_type' => ['nullable', 'string', 'in:aggregate,group_by,time_series'],
+            'saved_analysis_id' => ['required_if:export_type,saved_analysis', 'uuid'],
             'columns' => ['nullable', 'array'],
             'columns.*' => ['string'],
         ]);
 
-        $this->assertProductAccess($request, $validated['product_ids'], $validated['environment_keys'] ?? null);
+        if (($validated['export_type'] ?? 'raw') === 'raw' && empty($validated['signal_family'])) {
+            $validated['signal_family'] = 'events';
+        }
+
+        if (! empty($validated['product_ids'])) {
+            $this->assertProductAccess($request, $validated['product_ids'], $validated['environment_keys'] ?? null);
+        }
 
         $export = $this->exports->createExport($validated, $request->user());
 

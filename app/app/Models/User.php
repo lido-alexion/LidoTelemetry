@@ -45,4 +45,29 @@ class User extends Authenticatable
     {
         return $this->is_active && $this->isAdmin();
     }
+
+    public function isViewer(): bool
+    {
+        return $this->role === 'viewer';
+    }
+
+    public function canReadAnalytics(): bool
+    {
+        return $this->is_active && in_array($this->role, ['admin', 'analyst', 'viewer'], true);
+    }
+
+    public function canReadEvents(): bool
+    {
+        return $this->canReadAnalytics();
+    }
+
+    public function canExport(): bool
+    {
+        return $this->is_active && $this->isAnalyst();
+    }
+
+    public function canManageDashboards(): bool
+    {
+        return $this->is_active && $this->isAnalyst();
+    }
 }

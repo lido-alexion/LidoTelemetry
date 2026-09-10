@@ -104,7 +104,7 @@ class TelemetrySeeder extends Seeder
                             'analysis_type' => 'aggregate',
                             'query' => [
                                 'signal_family' => 'events',
-                                'aggregations' => [['type' => 'count']],
+                                'aggregations' => [['function' => 'count']],
                             ],
                         ],
                     ],
@@ -116,7 +116,7 @@ class TelemetrySeeder extends Seeder
                             'query' => [
                                 'signal_family' => 'events',
                                 'time_bucket' => 'hour',
-                                'aggregations' => [['type' => 'count']],
+                                'aggregations' => [['function' => 'count']],
                             ],
                         ],
                     ],
@@ -134,7 +134,7 @@ class TelemetrySeeder extends Seeder
                             'query' => [
                                 'signal_family' => 'events',
                                 'group_by' => ['event_type'],
-                                'aggregations' => [['type' => 'count']],
+                                'aggregations' => [['function' => 'count']],
                             ],
                         ],
                     ],
@@ -154,7 +154,7 @@ class TelemetrySeeder extends Seeder
                                 'filters' => [
                                     ['field' => 'event_type', 'operator' => 'eq', 'value' => 'navigation.view_started'],
                                 ],
-                                'aggregations' => [['type' => 'count']],
+                                'aggregations' => [['function' => 'count']],
                             ],
                         ],
                     ],
@@ -211,7 +211,7 @@ class TelemetrySeeder extends Seeder
                                 'filters' => [
                                     ['field' => 'category', 'operator' => 'eq', 'value' => 'operational'],
                                 ],
-                                'aggregations' => [['type' => 'count']],
+                                'aggregations' => [['function' => 'count']],
                             ],
                         ],
                     ],
@@ -229,7 +229,7 @@ class TelemetrySeeder extends Seeder
                             'query' => [
                                 'signal_family' => 'metrics',
                                 'time_bucket' => 'hour',
-                                'aggregations' => [['type' => 'avg', 'field' => 'value']],
+                                'aggregations' => [['function' => 'avg', 'field' => 'value']],
                             ],
                         ],
                     ],
@@ -247,7 +247,7 @@ class TelemetrySeeder extends Seeder
                             'query' => [
                                 'signal_family' => 'logs',
                                 'group_by' => ['severity'],
-                                'aggregations' => [['type' => 'count']],
+                                'aggregations' => [['function' => 'count']],
                             ],
                         ],
                     ],

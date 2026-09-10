@@ -24,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'api.token' => ApiTokenAuthMiddleware::class,
             'telemetry.active' => EnsureUserIsActive::class,
             'telemetry.admin' => EnsureUserIsAdmin::class,
+            'telemetry.analyst' => \App\Http\Middleware\EnsureUserCanManageDashboards::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -45,6 +45,13 @@ class CredentialController extends Controller
         return response()->json(['message' => 'Ingestion credential revoked.']);
     }
 
+    public function rotateIngestion(Request $request, int $credential): JsonResponse
+    {
+        $result = $this->credentials->rotateIngestionCredential($credential, $request->user());
+
+        return response()->json(['data' => $result], 201);
+    }
+
     public function indexApiTokens(Request $request): JsonResponse
     {
         return response()->json([
@@ -76,5 +83,12 @@ class CredentialController extends Controller
         $this->credentials->revokeApiToken($token, $request->user());
 
         return response()->json(['message' => 'API token revoked.']);
+    }
+
+    public function rotateApiToken(Request $request, int $token): JsonResponse
+    {
+        $result = $this->credentials->rotateApiToken($token, $request->user());
+
+        return response()->json(['data' => $result], 201);
     }
 }

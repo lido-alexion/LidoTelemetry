@@ -5,9 +5,12 @@ import { Transport } from './transport.js';
 import type {
   DiagnosticState,
   InteractionMetadata,
+  LogMetadata,
   Metadata,
+  MetricMetadata,
   NavigationMetadata,
   RemoteConfig,
+  SpanMetadata,
   TelemetryEvent,
   TelemetryInitOptions,
   ViewMetadata,
@@ -36,6 +39,9 @@ const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
         'body',
         'request_body',
         'response_body',
+        'note',
+        'prompt',
+        'search_text',
       ],
     },
   },
@@ -44,9 +50,12 @@ const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
 export type {
   DiagnosticState,
   InteractionMetadata,
+  LogMetadata,
   Metadata,
+  MetricMetadata,
   NavigationMetadata,
   RemoteConfig,
+  SpanMetadata,
   TelemetryEvent,
   TelemetryInitOptions,
   ViewMetadata,
@@ -63,9 +72,12 @@ export class TelemetryClient {
   private sessionId: string | null = null;
   private anonymousId: string | null = null;
   private userId: string | null = null;
+  private correlationId: string | null = null;
   private sequenceNumber = 0;
   private currentViewId: string | null = null;
   private currentViewStartedAt: number | null = null;
+  private activeVisibleMs = 0;
+  private lastActiveTickAt: number | null = null;
   private isVisible = true;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -74,8 +86,9 @@ export class TelemetryClient {
   private lastDeliveryError: string | null = null;
   private lastRemoteConfigFetch: string | null = null;
   private lifecycleBound = false;
+  private navigationBound = false;
+  private linkedAnonymousId: string | null = null;
 
-  /** Initialize the SDK. Call once per application load. */
   async init(options: TelemetryInitOptions): Promise<void> {
     if (this.initialized) {
       return;
@@ -91,6 +104,7 @@ export class TelemetryClient {
     this.anonymousId = getOrCreateAnonymousId();
     this.sessionId = getOrCreateSessionId();
     this.userId = options.userId ?? null;
+    this.correlationId = options.correlationId ?? null;
 
     if (options.applicationContext) {
       this.context.setApplicationContext(options.applicationContext);
@@ -107,67 +121,70 @@ export class TelemetryClient {
 
     await this.loadRemoteConfig();
 
+    this.enqueueEvent('navigation.session_started', {
+      user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+    });
+
     if (options.autoLifecycle !== false) {
       this.bindLifecycle();
     }
 
     if (this.remoteConfig.config.automatic_navigation_tracking) {
-      this.trackNavigation({
-        route: typeof location !== 'undefined' ? location.pathname : undefined,
-        path: typeof location !== 'undefined' ? location.pathname + location.search : undefined,
-        title: typeof document !== 'undefined' ? document.title : undefined,
-        referrer: typeof document !== 'undefined' ? document.referrer : undefined,
-      });
+      this.bindNavigationTracking();
+      this.captureCurrentRoute();
     }
 
+    this.capturePagePerformance();
     this.startHeartbeat();
+    this.tickActiveTime();
     this.initialized = true;
 
     void this.flushOfflineBuffer();
   }
 
-  /** Set authenticated user ID for subsequent events. */
   setUserId(userId: string | null): void {
+    const previousAnonymous = this.anonymousId;
     this.userId = userId;
+
+    if (userId && previousAnonymous && !this.linkedAnonymousId) {
+      this.linkedAnonymousId = previousAnonymous;
+      this.enqueueEvent('identity.linked', {
+        anonymous_id: previousAnonymous,
+        user_id: userId,
+      });
+    }
+
+    this.context.mergeSessionContext({ user_id: userId ?? undefined });
   }
 
-  /** Replace application-level context metadata. */
+  setCorrelationId(correlationId: string | null): void {
+    this.correlationId = correlationId;
+  }
+
   setApplicationContext(metadata: Metadata): void {
     this.context.setApplicationContext(metadata);
   }
 
-  /** Merge into application-level context. */
   mergeApplicationContext(metadata: Metadata): void {
     this.context.mergeApplicationContext(metadata);
   }
 
-  /** Replace session-level context metadata. */
   setSessionContext(metadata: Metadata): void {
     this.context.setSessionContext(metadata);
   }
 
-  /** Replace view-level context metadata. */
   setViewContext(metadata: Metadata): void {
     this.context.setViewContext(metadata);
   }
 
-  /** Track a custom event. */
   track(eventType: string, metadata?: Metadata): void {
     this.enqueueEvent(eventType, metadata);
   }
 
-  /** Track route/page navigation. */
   trackNavigation(metadata?: NavigationMetadata): void {
-    this.enqueueEvent('navigation.page_view', {
-      ...metadata,
-      route: metadata?.route ?? (typeof location !== 'undefined' ? location.pathname : undefined),
-      path: metadata?.path ?? (typeof location !== 'undefined' ? location.pathname + location.search : undefined),
-      title: metadata?.title ?? (typeof document !== 'undefined' ? document.title : undefined),
-      referrer: metadata?.referrer ?? (typeof document !== 'undefined' ? document.referrer : undefined),
-    });
+    this.captureCurrentRoute(metadata);
   }
 
-  /** Start a logical view instance. */
   trackViewStart(metadata?: ViewMetadata): void {
     if (this.currentViewId) {
       this.trackViewEnd();
@@ -175,6 +192,9 @@ export class TelemetryClient {
 
     this.currentViewId = generateId();
     this.currentViewStartedAt = Date.now();
+    this.activeVisibleMs = 0;
+    this.lastActiveTickAt = this.isVisible ? Date.now() : null;
+
     this.context.setViewContext({
       view_instance_id: this.currentViewId,
       ...metadata,
@@ -188,12 +208,12 @@ export class TelemetryClient {
     });
   }
 
-  /** End the active view instance. */
   trackViewEnd(metadata?: ViewMetadata): void {
     if (!this.currentViewId) {
       return;
     }
 
+    this.flushActiveTime();
     const wallClockMs =
       this.currentViewStartedAt !== null ? Date.now() - this.currentViewStartedAt : undefined;
 
@@ -203,27 +223,98 @@ export class TelemetryClient {
       route: metadata?.route,
       path: metadata?.path,
       wall_clock_ms: wallClockMs,
+      active_duration_ms: this.activeVisibleMs,
       ...metadata,
     });
 
     this.currentViewId = null;
     this.currentViewStartedAt = null;
+    this.activeVisibleMs = 0;
+    this.lastActiveTickAt = null;
     this.context.clearViewContext();
   }
 
-  /** Track an explicit user interaction. */
-  trackInteraction(metadata?: InteractionMetadata): void {
-    this.enqueueEvent('interaction.performed', metadata);
+  trackInteraction(action: string, metadata?: InteractionMetadata): void {
+    this.enqueueEvent(`interaction.${action}`, {
+      action,
+      ...metadata,
+    });
   }
 
-  /** Flush pending events and shut down listeners. */
-  async shutdown(): Promise<void> {
-    if (this.currentViewId) {
-      this.trackViewEnd();
+  trackMetric(name: string, value: number, type: MetricMetadata['type'] = 'gauge', dimensions?: Metadata): void {
+    if (!this.remoteConfig.config.signal_families.metrics || !this.transport) {
+      return;
     }
 
+    void this.transport.sendMetrics([
+      {
+        id: generateId(),
+        name,
+        type,
+        value,
+        occurred_at: new Date().toISOString(),
+        user_id: this.userId ?? undefined,
+        anonymous_id: this.anonymousId ?? undefined,
+        session_id: this.sessionId ?? undefined,
+        correlation_id: this.correlationId ?? undefined,
+        dimensions: this.filterMetadata(this.context.resolve(dimensions)),
+      },
+    ]).catch((error) => this.handleDeliveryError(error));
+  }
+
+  trackLog(severity: string, message: string, metadata?: LogMetadata): void {
+    if (!this.remoteConfig.config.signal_families.logs || !this.transport) {
+      return;
+    }
+
+    void this.transport.sendLogs([
+      {
+        id: generateId(),
+        severity,
+        message,
+        service: metadata?.service,
+        message_code: metadata?.message_code,
+        occurred_at: new Date().toISOString(),
+        user_id: this.userId ?? undefined,
+        session_id: this.sessionId ?? undefined,
+        correlation_id: this.correlationId ?? undefined,
+        metadata: this.filterMetadata(this.context.resolve(metadata)),
+      },
+    ]).catch((error) => this.handleDeliveryError(error));
+  }
+
+  trackSpan(metadata: SpanMetadata): void {
+    if (!this.remoteConfig.config.signal_families.traces || !this.transport) {
+      return;
+    }
+
+    void this.transport.sendTraces([
+      {
+        trace_id: metadata.trace_id,
+        span_id: metadata.span_id,
+        parent_span_id: metadata.parent_span_id,
+        name: metadata.name,
+        started_at: metadata.started_at ?? new Date().toISOString(),
+        ended_at: metadata.ended_at,
+        duration_ms: metadata.duration_ms,
+        status: metadata.status,
+        user_id: this.userId ?? undefined,
+        session_id: this.sessionId ?? undefined,
+        correlation_id: this.correlationId ?? metadata.correlation_id ?? this.correlationId ?? undefined,
+        attributes: this.filterMetadata(this.context.resolve(metadata.attributes)),
+      },
+    ]).catch((error) => this.handleDeliveryError(error));
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.currentViewId) {
+      this.trackViewEnd({ abrupt: true });
+    }
+
+    this.enqueueEvent('navigation.session_ended');
     this.stopHeartbeat();
     this.unbindLifecycle();
+    this.unbindNavigationTracking();
 
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -234,7 +325,6 @@ export class TelemetryClient {
     this.initialized = false;
   }
 
-  /** Current diagnostic state for developer tooling. */
   async getDiagnosticState(): Promise<DiagnosticState> {
     const bufferedCount = this.buffer ? await this.buffer.count() : 0;
 
@@ -248,6 +338,79 @@ export class TelemetryClient {
       anonymousId: this.anonymousId,
     };
   }
+
+  private captureCurrentRoute(metadata?: NavigationMetadata): void {
+    const route = metadata?.route ?? (typeof location !== 'undefined' ? location.pathname : undefined);
+    const path = metadata?.path ?? (typeof location !== 'undefined' ? location.pathname + location.search : undefined);
+
+    this.trackViewStart({
+      ...metadata,
+      view_name: (metadata?.view_name as string | undefined) ?? route,
+      route,
+      path,
+      title: metadata?.title ?? (typeof document !== 'undefined' ? document.title : undefined),
+      referrer: metadata?.referrer ?? (typeof document !== 'undefined' ? document.referrer : undefined),
+    });
+  }
+
+  private capturePagePerformance(): void {
+    if (typeof performance === 'undefined') {
+      return;
+    }
+
+    const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (!nav) {
+      return;
+    }
+
+    this.enqueueEvent('performance.page_load', {
+      dom_content_loaded_ms: Math.round(nav.domContentLoadedEventEnd),
+      load_event_ms: Math.round(nav.loadEventEnd),
+      ttfb_ms: Math.round(nav.responseStart - nav.requestStart),
+    });
+  }
+
+  private bindNavigationTracking(): void {
+    if (this.navigationBound || typeof window === 'undefined') {
+      return;
+    }
+
+    this.navigationBound = true;
+    window.addEventListener('popstate', this.onRouteChange);
+    window.addEventListener('hashchange', this.onRouteChange);
+
+    const originalPushState = history.pushState.bind(history);
+    const originalReplaceState = history.replaceState.bind(history);
+    const client = this;
+
+    history.pushState = function (...args) {
+      originalPushState(...args);
+      client.onRouteChange();
+    };
+
+    history.replaceState = function (...args) {
+      originalReplaceState(...args);
+      client.onRouteChange();
+    };
+  }
+
+  private unbindNavigationTracking(): void {
+    if (!this.navigationBound || typeof window === 'undefined') {
+      return;
+    }
+
+    window.removeEventListener('popstate', this.onRouteChange);
+    window.removeEventListener('hashchange', this.onRouteChange);
+    this.navigationBound = false;
+  }
+
+  private readonly onRouteChange = (): void => {
+    if (!this.remoteConfig.config.automatic_navigation_tracking) {
+      return;
+    }
+
+    this.captureCurrentRoute();
+  };
 
   private enqueueEvent(eventType: string, metadata?: Metadata): void {
     if (!this.initialized || !this.options) {
@@ -298,6 +461,7 @@ export class TelemetryClient {
       session_id: this.sessionId ?? undefined,
       view_instance_id: this.currentViewId ?? undefined,
       sequence_number: this.sequenceNumber,
+      correlation_id: this.correlationId ?? undefined,
       metadata: Object.keys(resolvedMetadata).length > 0 ? resolvedMetadata : undefined,
     };
   }
@@ -341,6 +505,18 @@ export class TelemetryClient {
     return this.remoteConfig.config.heartbeat_interval_seconds;
   }
 
+  private tickActiveTime(): void {
+    if (this.isVisible && this.lastActiveTickAt !== null) {
+      this.activeVisibleMs += Date.now() - this.lastActiveTickAt;
+    }
+
+    this.lastActiveTickAt = this.isVisible ? Date.now() : null;
+  }
+
+  private flushActiveTime(): void {
+    this.tickActiveTime();
+  }
+
   private async deliverOrBuffer(events: TelemetryEvent[]): Promise<void> {
     try {
       await this.deliverBatch(events);
@@ -365,11 +541,15 @@ export class TelemetryClient {
       await this.transport.sendEvents(events);
       this.lastDeliveryError = null;
     } catch (error) {
-      this.lastDeliveryError = error instanceof Error ? error.message : String(error);
-      this.diagnostic('delivery failed', error);
+      this.handleDeliveryError(error);
       await this.bufferEvents(events);
       throw error;
     }
+  }
+
+  private handleDeliveryError(error: unknown): void {
+    this.lastDeliveryError = error instanceof Error ? error.message : String(error);
+    this.diagnostic('delivery failed', error);
   }
 
   private async bufferEvents(events: TelemetryEvent[]): Promise<void> {
@@ -404,7 +584,7 @@ export class TelemetryClient {
           await this.buffer.enqueue(event);
         }
 
-        this.lastDeliveryError = error instanceof Error ? error.message : String(error);
+        this.handleDeliveryError(error);
         this.scheduleRetry();
         break;
       }
@@ -493,6 +673,7 @@ export class TelemetryClient {
       return;
     }
 
+    this.flushActiveTime();
     this.isVisible = visible;
 
     if (visible) {
@@ -510,9 +691,13 @@ export class TelemetryClient {
 
   private readonly onPageHide = (): void => {
     if (this.currentViewId) {
+      this.flushActiveTime();
       const event = this.buildEvent('navigation.view_ended', {
         view_instance_id: this.currentViewId,
         abrupt: true,
+        active_duration_ms: this.activeVisibleMs,
+        wall_clock_ms:
+          this.currentViewStartedAt !== null ? Date.now() - this.currentViewStartedAt : undefined,
       });
 
       void this.deliverOrBuffer([event]);
@@ -531,7 +716,8 @@ export class TelemetryClient {
         return;
       }
 
-      this.enqueueEvent('session.heartbeat', {
+      this.tickActiveTime();
+      this.enqueueEvent('navigation.heartbeat', {
         view_instance_id: this.currentViewId ?? undefined,
       });
     }, intervalMs);

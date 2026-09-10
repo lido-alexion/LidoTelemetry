@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\Telemetry\AuditService;
 use App\Services\Telemetry\UserInviteService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,6 +15,7 @@ class AuthController extends Controller
 {
     public function __construct(
         protected UserInviteService $invites,
+        protected AuditService $audit,
     ) {}
 
     public function login(Request $request): JsonResponse
@@ -39,6 +41,13 @@ class AuthController extends Controller
             'password' => $validated['password'],
             'is_active' => true,
         ], $remember)) {
+            $this->audit->log(
+                action: 'auth.login_failed',
+                userId: User::query()->where('email', $validated['email'])->value('id'),
+                context: ['email' => $validated['email']],
+                ipAddress: $request->ip(),
+            );
+
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -50,6 +59,14 @@ class AuthController extends Controller
         $user = Auth::guard('web')->user();
         $request->session()->put('logged_in_at', now()->timestamp);
         $request->session()->regenerate();
+
+        $this->audit->log(
+            action: 'auth.login_succeeded',
+            userId: $user->id,
+            subjectType: 'user',
+            subjectId: (string) $user->id,
+            ipAddress: $request->ip(),
+        );
 
         return response()->json([
             'user' => $this->userPayload($user),

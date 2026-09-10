@@ -108,6 +108,8 @@ export function AuthProvider({ children }) {
         loading,
         isAuthenticated: Boolean(user),
         isAdmin: user?.role === 'admin',
+        isAnalyst: user?.role === 'admin' || user?.role === 'analyst',
+        isViewer: user?.role === 'viewer',
         sessionExpired,
         login,
         logout,

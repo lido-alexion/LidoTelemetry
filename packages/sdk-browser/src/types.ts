@@ -9,6 +9,8 @@ export interface TelemetryInitOptions {
   productKey?: string;
   /** Authenticated product-scoped user ID. */
   userId?: string;
+  /** Application correlation ID propagated on all signals. */
+  correlationId?: string;
   /** Application-level metadata merged into every event. */
   applicationContext?: Metadata;
   /** Heartbeat interval in seconds (overrides remote config when set). */
@@ -76,6 +78,28 @@ export interface InteractionMetadata extends Metadata {
   element?: string;
   action?: string;
   label?: string;
+}
+
+export interface MetricMetadata extends Metadata {
+  type?: 'counter' | 'gauge' | 'histogram' | 'timer';
+}
+
+export interface LogMetadata extends Metadata {
+  service?: string;
+  message_code?: string;
+}
+
+export interface SpanMetadata extends Metadata {
+  trace_id: string;
+  span_id: string;
+  parent_span_id?: string;
+  name: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms?: number;
+  status?: string;
+  correlation_id?: string;
+  attributes?: Metadata;
 }
 
 export interface DiagnosticState {

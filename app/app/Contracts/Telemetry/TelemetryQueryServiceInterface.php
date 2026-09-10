@@ -36,4 +36,19 @@ interface TelemetryQueryServiceInterface
      * @return list<array<string, mixed>>
      */
     public function funnels(array $steps, AnalyticsQuery $query): array;
+
+    /**
+     * @return array{data: list<array<string, mixed>>, total: int, limit: int, offset: int}
+     */
+    public function views(AnalyticsQuery $query): array;
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function journeys(AnalyticsQuery $query): array;
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function retention(AnalyticsQuery $query): array;
 }

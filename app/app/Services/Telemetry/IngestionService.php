@@ -22,6 +22,7 @@ class IngestionService
         protected SessionMaterializationService $sessionMaterialization,
         protected ViewMaterializationService $viewMaterialization,
         protected AggregateMaterializationService $aggregateMaterialization,
+        protected DeletionService $deletions,
     ) {}
 
     /**
@@ -35,9 +36,22 @@ class IngestionService
         $receivedAt = now();
         $prepared = [];
         $duplicates = 0;
+        $rejected = 0;
 
         foreach ($events as $payload) {
             $event = $this->prepareEvent($payload, $productId, $environment, $receivedAt);
+
+            if ($this->deletions->isTombstoned(
+                $productId,
+                $environment,
+                $event['user_id'] ?? null,
+                $event['session_id'] ?? null,
+                $event['occurred_at'],
+            )) {
+                $rejected++;
+
+                continue;
+            }
 
             if ($this->eventWriter->exists($event['event_id'])) {
                 $duplicates++;
@@ -57,6 +71,7 @@ class IngestionService
         return [
             'accepted' => $result['inserted'],
             'duplicates' => $duplicates + $result['duplicates'],
+            'rejected' => $rejected,
         ];
     }
 

@@ -31,7 +31,7 @@ class QueryController extends Controller
             'order_by' => ['nullable', 'array'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:'.config('telemetry.query.max_limit')],
             'offset' => ['nullable', 'integer', 'min:0'],
-            'analysis_type' => ['nullable', 'string', 'in:search,aggregate,group_by,time_series,sessions,funnels'],
+            'analysis_type' => ['nullable', 'string', 'in:search,aggregate,group_by,time_series,sessions,funnels,journeys,retention,views'],
             'steps' => ['nullable', 'array'],
             'steps.*' => ['array'],
         ]);
@@ -46,7 +46,10 @@ class QueryController extends Controller
             'group_by' => $this->queryService->groupBy($query),
             'time_series' => $this->queryService->timeSeries($query),
             'sessions' => $this->queryService->sessions($query),
+            'views' => $this->queryService->views($query),
             'funnels' => $this->queryService->funnels($definition['steps'] ?? [], $query),
+            'journeys' => $this->queryService->journeys($query),
+            'retention' => $this->queryService->retention($query),
             default => $this->queryService->aggregate($query),
         };
 

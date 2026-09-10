@@ -4,11 +4,15 @@ namespace App\Infrastructure\Telemetry\Relational;
 
 use App\Contracts\Telemetry\TelemetryQueryServiceInterface;
 use App\Domain\Telemetry\AnalyticsQuery;
+use App\Models\TelemetryDeletionTombstone;
 use App\Models\TelemetryEvent;
 use App\Models\TelemetryLog;
 use App\Models\TelemetryMetric;
 use App\Models\TelemetrySession;
 use App\Models\TelemetryTraceSpan;
+use App\Models\TelemetryView;
+use App\Services\Telemetry\DeletionService;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -22,8 +26,9 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
 
         $total = (clone $builder)->count();
 
+        $this->applySearchOrdering($builder, $query);
+
         $rows = $builder
-            ->orderByDesc($this->timestampColumn($query))
             ->offset($offset)
             ->limit($limit)
             ->get()
@@ -45,8 +50,8 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
         $results = [];
 
         foreach ($aggregations as $aggregation) {
-            $alias = (string) ($aggregation['alias'] ?? $aggregation['function'] ?? 'count');
-            $function = strtolower((string) ($aggregation['function'] ?? 'count'));
+            $alias = (string) ($aggregation['alias'] ?? $aggregation['function'] ?? $aggregation['type'] ?? 'count');
+            $function = strtolower((string) ($aggregation['function'] ?? $aggregation['type'] ?? 'count'));
             $field = (string) ($aggregation['field'] ?? '*');
 
             $expression = match ($function) {
@@ -81,8 +86,8 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
         $aggregations = $query->aggregations !== [] ? $query->aggregations : [['function' => 'count', 'alias' => 'count']];
 
         foreach ($aggregations as $aggregation) {
-            $alias = (string) ($aggregation['alias'] ?? $aggregation['function'] ?? 'count');
-            $function = strtolower((string) ($aggregation['function'] ?? 'count'));
+            $alias = (string) ($aggregation['alias'] ?? $aggregation['function'] ?? $aggregation['type'] ?? 'count');
+            $function = strtolower((string) ($aggregation['function'] ?? $aggregation['type'] ?? 'count'));
             $field = (string) ($aggregation['field'] ?? '*');
 
             $expression = match ($function) {
@@ -100,7 +105,7 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
         $rows = $builder
             ->select($selects)
             ->groupBy(...$groupExpressions)
-            ->orderByDesc($aggregations[0]['alias'] ?? 'count')
+            ->orderByDesc($aggregations[0]['alias'] ?? $aggregations[0]['function'] ?? 'count')
             ->limit($query->cappedLimit())
             ->get();
 
@@ -137,8 +142,8 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
         $selects = [DB::raw("{$bucketExpression} as bucket")];
 
         foreach ($aggregations as $aggregation) {
-            $alias = (string) ($aggregation['alias'] ?? $aggregation['function'] ?? 'count');
-            $function = strtolower((string) ($aggregation['function'] ?? 'count'));
+            $alias = (string) ($aggregation['alias'] ?? $aggregation['function'] ?? $aggregation['type'] ?? 'count');
+            $function = strtolower((string) ($aggregation['function'] ?? $aggregation['type'] ?? 'count'));
             $field = (string) ($aggregation['field'] ?? '*');
 
             $expression = match ($function) {
@@ -170,6 +175,37 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
         $this->applyTimeRange($builder, $query, 'telemetry_sessions', 'started_at');
         $this->applyFilters($builder, $query, 'telemetry_sessions');
         $this->applyMetadataPredicates($builder, $query, 'telemetry_sessions', 'metadata_snapshot');
+        $this->applyTombstoneExclusion($builder, $query, 'telemetry_sessions');
+
+        $limit = $query->cappedLimit();
+        $offset = max($query->offset, 0);
+        $total = (clone $builder)->count();
+
+        $rows = $builder
+            ->orderByDesc('started_at')
+            ->offset($offset)
+            ->limit($limit)
+            ->get()
+            ->map(fn ($row): array => $row->toArray())
+            ->all();
+
+        return [
+            'data' => $rows,
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+        ];
+    }
+
+    public function views(AnalyticsQuery $query): array
+    {
+        $builder = TelemetryView::query();
+        $this->applyProductScope($builder, $query, 'telemetry_views');
+        $this->applyEnvironmentScope($builder, $query, 'telemetry_views');
+        $this->applyTimeRange($builder, $query, 'telemetry_views', 'started_at');
+        $this->applyFilters($builder, $query, 'telemetry_views');
+        $this->applyMetadataPredicates($builder, $query, 'telemetry_views', 'metadata_snapshot');
+        $this->applyTombstoneExclusion($builder, $query, 'telemetry_views');
 
         $limit = $query->cappedLimit();
         $offset = max($query->offset, 0);
@@ -248,6 +284,135 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
         }, $results);
     }
 
+    public function journeys(AnalyticsQuery $query): array
+    {
+        $builder = $this->baseBuilder(AnalyticsQuery::fromArray(array_merge($query->toArray(), [
+            'signal_family' => AnalyticsQuery::SIGNAL_EVENTS,
+        ])));
+
+        $builder->where('event_type', 'like', 'navigation.%')
+            ->whereNotNull('session_id')
+            ->orderBy('session_id')
+            ->orderByRaw('COALESCE(sequence_number, 0) ASC')
+            ->orderBy('occurred_at');
+
+        $events = $builder->get(['session_id', 'event_type', 'occurred_at', 'metadata', 'sequence_number']);
+
+        $paths = [];
+
+        foreach ($events->groupBy('session_id') as $sessionId => $sessionEvents) {
+            $steps = $sessionEvents->map(function ($event): string {
+                $metadata = $event->metadata ?? [];
+                $viewName = $metadata['view_name'] ?? $metadata['view'] ?? $metadata['route'] ?? null;
+
+                if (is_string($viewName) && $viewName !== '') {
+                    return $viewName;
+                }
+
+                return (string) $event->event_type;
+            })->values()->all();
+
+            if ($steps === []) {
+                continue;
+            }
+
+            $pathKey = implode(' → ', $steps);
+            $paths[$pathKey] = ($paths[$pathKey] ?? 0) + 1;
+        }
+
+        $results = [];
+
+        foreach ($paths as $path => $count) {
+            $results[] = [
+                'path' => $path,
+                'steps' => explode(' → ', $path),
+                'session_count' => $count,
+            ];
+        }
+
+        usort($results, fn (array $a, array $b): int => $b['session_count'] <=> $a['session_count']);
+
+        return array_slice($results, 0, $query->cappedLimit());
+    }
+
+    public function retention(AnalyticsQuery $query): array
+    {
+        $cohortStart = $query->timeRangeStart ?? Carbon::now()->subDays(30);
+        $cohortEnd = $query->timeRangeEnd ?? Carbon::now();
+
+        $cohortQuery = AnalyticsQuery::fromArray(array_merge($query->toArray(), [
+            'signal_family' => AnalyticsQuery::SIGNAL_EVENTS,
+            'time_range' => [
+                'start' => $cohortStart->toIso8601String(),
+                'end' => $cohortEnd->toIso8601String(),
+            ],
+        ]));
+
+        $firstEvents = $this->baseBuilder($cohortQuery)
+            ->select(['user_id', 'anonymous_id', 'session_id', 'occurred_at'])
+            ->where(function ($builder): void {
+                $builder->whereNotNull('user_id')
+                    ->orWhereNotNull('anonymous_id');
+            })
+            ->orderBy('occurred_at')
+            ->get();
+
+        $cohorts = [];
+
+        foreach ($firstEvents as $event) {
+            $identity = $event->user_id ?? $event->anonymous_id;
+
+            if ($identity === null || isset($cohorts[$identity])) {
+                continue;
+            }
+
+            $cohorts[$identity] = [
+                'identity' => $identity,
+                'identity_field' => $event->user_id ? 'user_id' : 'anonymous_id',
+                'cohort_date' => $event->occurred_at->toDateString(),
+                'first_seen_at' => $event->occurred_at,
+            ];
+        }
+
+        $periods = [1, 7, 14, 30];
+        $results = [];
+
+        foreach ($periods as $days) {
+            $retained = 0;
+
+            foreach ($cohorts as $cohort) {
+                $windowStart = Carbon::parse($cohort['first_seen_at'])->addDays($days)->startOfDay();
+                $windowEnd = $windowStart->copy()->endOfDay();
+
+                $returnQuery = AnalyticsQuery::fromArray(array_merge($query->toArray(), [
+                    'signal_family' => AnalyticsQuery::SIGNAL_EVENTS,
+                    'time_range' => [
+                        'start' => $windowStart->toIso8601String(),
+                        'end' => $windowEnd->toIso8601String(),
+                    ],
+                    'filters' => array_merge($query->filters, [
+                        ['field' => $cohort['identity_field'], 'operator' => 'eq', 'value' => $cohort['identity']],
+                    ]),
+                ]));
+
+                if ($this->baseBuilder($returnQuery)->exists()) {
+                    $retained++;
+                }
+            }
+
+            $cohortSize = count($cohorts);
+
+            $results[] = [
+                'period_days' => $days,
+                'cohort_size' => $cohortSize,
+                'retained' => $retained,
+                'retention_rate' => $cohortSize > 0 ? round($retained / $cohortSize, 4) : 0.0,
+            ];
+        }
+
+        return $results;
+    }
+
     private function baseBuilder(AnalyticsQuery $query): Builder
     {
         $builder = match ($query->signalFamily) {
@@ -268,8 +433,33 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
             $table,
             $this->jsonColumn($query),
         );
+        $this->applyTombstoneExclusion($builder, $query, $table);
 
         return $builder;
+    }
+
+    private function applySearchOrdering(Builder $builder, AnalyticsQuery $query): void
+    {
+        $table = $this->tableForSignal($query);
+
+        if ($query->orderBy !== []) {
+            foreach ($query->orderBy as $order) {
+                $field = (string) ($order['field'] ?? $order['column'] ?? 'occurred_at');
+                $direction = strtolower((string) ($order['direction'] ?? 'desc')) === 'asc' ? 'asc' : 'desc';
+                $builder->orderBy("{$table}.{$field}", $direction);
+            }
+
+            return;
+        }
+
+        if ($query->signalFamily === AnalyticsQuery::SIGNAL_EVENTS) {
+            $builder->orderByRaw("COALESCE({$table}.sequence_number, 0) ASC")
+                ->orderByDesc("{$table}.occurred_at");
+
+            return;
+        }
+
+        $builder->orderByDesc($this->timestampColumn($query));
     }
 
     private function applyProductScope(Builder $builder, AnalyticsQuery $query, string $table): void
@@ -300,9 +490,21 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
     private function applyFilters(Builder $builder, AnalyticsQuery $query, string $table): void
     {
         foreach ($query->filters as $filter) {
+            if (isset($filter['search']) && is_string($filter['search']) && $filter['search'] !== '') {
+                $this->applySearchFilter($builder, $table, $filter['search']);
+
+                continue;
+            }
+
             $field = (string) ($filter['field'] ?? '');
             $operator = strtolower((string) ($filter['operator'] ?? 'eq'));
             $value = $filter['value'] ?? null;
+
+            if ($field === 'search' && is_string($value) && $value !== '') {
+                $this->applySearchFilter($builder, $table, $value);
+
+                continue;
+            }
 
             if ($field === '') {
                 continue;
@@ -322,6 +524,18 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
         }
     }
 
+    private function applySearchFilter(Builder $builder, string $table, string $search): void
+    {
+        $like = '%'.$search.'%';
+
+        $builder->where(function ($query) use ($table, $like): void {
+            $query->where("{$table}.event_type", 'like', $like)
+                ->orWhere("{$table}.user_id", 'like', $like)
+                ->orWhere("{$table}.session_id", 'like', $like)
+                ->orWhere("{$table}.correlation_id", 'like', $like);
+        });
+    }
+
     private function applyMetadataPredicates(Builder $builder, AnalyticsQuery $query, string $table, ?string $jsonColumn): void
     {
         if ($jsonColumn === null) {
@@ -339,6 +553,49 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
 
             $expression = $this->jsonExtractExpression("{$table}.{$jsonColumn}", $path);
             $this->applyOperator($builder, $expression, $operator, $value);
+        }
+    }
+
+    private function applyTombstoneExclusion(Builder $builder, AnalyticsQuery $query, string $table): void
+    {
+        if ($query->productIds === []) {
+            return;
+        }
+
+        $tombstones = TelemetryDeletionTombstone::query()
+            ->whereIn('product_id', $query->productIds)
+            ->get();
+
+        if ($tombstones->isEmpty()) {
+            return;
+        }
+
+        $timestampColumn = in_array($table, ['telemetry_sessions', 'telemetry_views'], true) ? 'started_at' : 'occurred_at';
+
+        foreach ($tombstones as $tombstone) {
+            $builder->whereNot(function ($exclude) use ($tombstone, $table, $timestampColumn): void {
+                match ($tombstone->scope_type) {
+                    DeletionService::SCOPE_PRODUCT => $exclude
+                        ->where("{$table}.product_id", $tombstone->product_id),
+                    DeletionService::SCOPE_ENVIRONMENT => $exclude
+                        ->where("{$table}.product_id", $tombstone->product_id)
+                        ->where("{$table}.environment", $tombstone->environment),
+                    DeletionService::SCOPE_USER => $exclude
+                        ->where("{$table}.product_id", $tombstone->product_id)
+                        ->where("{$table}.user_id", $tombstone->scope_value),
+                    DeletionService::SCOPE_ANONYMOUS => $exclude
+                        ->where("{$table}.product_id", $tombstone->product_id)
+                        ->where("{$table}.anonymous_id", $tombstone->scope_value),
+                    DeletionService::SCOPE_SESSION => $exclude
+                        ->where("{$table}.session_id", $tombstone->scope_value),
+                    DeletionService::SCOPE_RANGE => $exclude
+                        ->where("{$table}.product_id", $tombstone->product_id)
+                        ->when($tombstone->environment, fn ($q) => $q->where("{$table}.environment", $tombstone->environment))
+                        ->where("{$table}.{$timestampColumn}", '>=', $tombstone->range_start)
+                        ->where("{$table}.{$timestampColumn}", '<=', $tombstone->range_end),
+                    default => null,
+                };
+            });
         }
     }
 
@@ -422,6 +679,7 @@ class RelationalTelemetryQueryService implements TelemetryQueryServiceInterface
             'telemetry_logs' => 'metadata',
             'telemetry_trace_spans' => 'attributes',
             'telemetry_sessions' => 'metadata_snapshot',
+            'telemetry_views' => 'metadata_snapshot',
             default => 'metadata',
         };
     }
