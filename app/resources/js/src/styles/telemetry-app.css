@@ -1,0 +1,184 @@
+:root,
+[data-theme='dark'] {
+    --telemetry-bg-page: #0a0a0a;
+    --telemetry-bg-surface: #141414;
+    --telemetry-bg-elevated: #1a1a1a;
+    --telemetry-text: #e5e7eb;
+    --telemetry-text-muted: #9ca3af;
+    --telemetry-border: #2a2a2a;
+    --telemetry-brand: #1e90ff;
+    --telemetry-brand-hover: #4da3ff;
+    --telemetry-header-bg: #000;
+    --telemetry-header-border: #222;
+    --telemetry-input-bg: #1a1a1a;
+    --telemetry-input-border: #333;
+    color-scheme: dark;
+}
+
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+    background-color: var(--telemetry-bg-page);
+    color: var(--telemetry-text);
+}
+
+#app {
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+.telemetry-app-frame {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+}
+
+.telemetry-main {
+    flex: 1 1 auto;
+}
+
+.telemetry-header {
+    background-color: var(--telemetry-header-bg);
+    border-bottom: 1px solid var(--telemetry-header-border);
+}
+
+.telemetry-header-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+}
+
+.telemetry-header-title-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.telemetry-header-title {
+    font-size: 1.1rem;
+    margin: 0;
+    font-weight: 600;
+}
+
+.telemetry-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.telemetry-nav {
+    padding: 0 1rem 0.75rem;
+    overflow-x: auto;
+}
+
+.telemetry-nav .nav-link {
+    color: var(--telemetry-text-muted);
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    white-space: nowrap;
+}
+
+.telemetry-nav .nav-link.active,
+.telemetry-nav .nav-link:hover {
+    color: var(--telemetry-text);
+    background-color: rgba(30, 144, 255, 0.15);
+}
+
+.telemetry-nav-admin {
+    color: #9ecbff !important;
+}
+
+.card,
+.telemetry-query-controls,
+.telemetry-widget-card {
+    background-color: var(--telemetry-bg-surface);
+    border-color: var(--telemetry-border);
+    color: var(--telemetry-text);
+}
+
+.card-header {
+    background-color: var(--telemetry-bg-elevated);
+    border-bottom-color: var(--telemetry-border);
+}
+
+.form-control,
+.form-select {
+    background-color: var(--telemetry-input-bg);
+    border-color: var(--telemetry-input-border);
+    color: var(--telemetry-text);
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--telemetry-input-bg);
+    border-color: var(--telemetry-brand);
+    color: var(--telemetry-text);
+    box-shadow: 0 0 0 0.2rem rgba(30, 144, 255, 0.25);
+}
+
+.form-check-input {
+    background-color: var(--telemetry-input-bg);
+    border-color: var(--telemetry-input-border);
+}
+
+.table-dark {
+    --bs-table-bg: var(--telemetry-bg-surface);
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.03);
+    --bs-table-hover-bg: rgba(30, 144, 255, 0.08);
+    border-color: var(--telemetry-border);
+}
+
+.nav-tabs {
+    border-bottom-color: var(--telemetry-border);
+}
+
+.nav-tabs .nav-link {
+    color: var(--telemetry-text-muted);
+    border-color: transparent;
+}
+
+.nav-tabs .nav-link.active {
+    background-color: var(--telemetry-bg-surface);
+    border-color: var(--telemetry-border) var(--telemetry-border) var(--telemetry-bg-surface);
+    color: var(--telemetry-text);
+}
+
+.btn-info {
+    --bs-btn-bg: var(--telemetry-brand);
+    --bs-btn-border-color: var(--telemetry-brand);
+    --bs-btn-hover-bg: var(--telemetry-brand-hover);
+    --bs-btn-hover-border-color: var(--telemetry-brand-hover);
+    color: #fff;
+}
+
+.login-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-card {
+    background-color: var(--telemetry-bg-surface);
+    border: 1px solid var(--telemetry-border);
+    border-radius: 8px;
+    max-width: 420px;
+    width: 100%;
+}
+
+.telemetry-json-preview {
+    font-size: 0.75rem;
+    max-height: 12rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--telemetry-text-muted);
+}
+
+.badge.bg-secondary {
+    background-color: #374151 !important;
+}

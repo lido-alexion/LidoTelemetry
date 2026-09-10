@@ -1,0 +1,26 @@
+{
+    "name": "lido-alexion/telemetry-php",
+    "description": "PHP server SDK for Lido Telemetry — async durable queue for events, metrics, logs, and traces.",
+    "type": "library",
+    "license": "MIT",
+    "version": "0.1.0",
+    "require": {
+        "php": "^8.2",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "LidoAlexion\\Telemetry\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "LidoAlexion\\Telemetry\\Tests\\": "tests/"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

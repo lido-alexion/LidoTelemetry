@@ -1,0 +1,23 @@
+/.idea/
+/.vscode/
+.DS_Store
+composer.phar
+*.log
+
+# Laravel app
+/app/vendor/
+/app/node_modules/
+/app/public/build/
+/app/public/hot
+/app/storage/*.key
+/app/.env
+/app/.env.*
+!/app/.env.example
+/app/database/database.sqlite
+
+# SDK builds
+/packages/sdk-browser/node_modules/
+/packages/sdk-browser/dist/
+
+# PHP
+.phpunit.result.cache
