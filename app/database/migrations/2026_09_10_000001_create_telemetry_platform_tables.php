@@ -267,7 +267,7 @@ return new class extends Migration
             $table->string('dimensions_hash', 64)->default('');
             $table->timestamps();
             $table->unique(['product_id', 'environment', 'signal_family', 'metric_key', 'bucket_start', 'dimensions_hash'], 'telemetry_hourly_agg_unique');
-            $table->index(['product_id', 'environment', 'bucket_start']);
+            $table->index(['product_id', 'environment', 'bucket_start'], 'telemetry_hourly_bucket_idx');
         });
 
         Schema::create('telemetry_daily_aggregates', function (Blueprint $table) {
@@ -283,7 +283,7 @@ return new class extends Migration
             $table->string('dimensions_hash', 64)->default('');
             $table->timestamps();
             $table->unique(['product_id', 'environment', 'signal_family', 'metric_key', 'bucket_date', 'dimensions_hash'], 'telemetry_daily_agg_unique');
-            $table->index(['product_id', 'environment', 'bucket_date']);
+            $table->index(['product_id', 'environment', 'bucket_date'], 'telemetry_daily_bucket_idx');
         });
 
         Schema::create('telemetry_saved_analyses', function (Blueprint $table) {
