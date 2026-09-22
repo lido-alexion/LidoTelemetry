@@ -112,7 +112,7 @@ return new class extends Migration
             $table->boolean('clock_skew_flag')->default(false);
             $table->timestamps();
             $table->index(['product_id', 'environment', 'occurred_at']);
-            $table->index(['product_id', 'environment', 'event_type', 'occurred_at']);
+            $table->index(['product_id', 'environment', 'event_type', 'occurred_at'], 'telemetry_events_type_occurred_idx');
             $table->index(['session_id', 'sequence_number']);
             $table->index(['user_id', 'occurred_at']);
             $table->index(['correlation_id']);
@@ -179,7 +179,7 @@ return new class extends Migration
             $table->string('correlation_id')->nullable();
             $table->timestamp('received_at');
             $table->timestamps();
-            $table->unique(['product_id', 'environment', 'trace_id', 'span_id']);
+            $table->unique(['product_id', 'environment', 'trace_id', 'span_id'], 'telemetry_trace_spans_identity_unique');
             $table->index(['product_id', 'environment', 'trace_id']);
             $table->foreign('product_id')->references('id')->on('telemetry_products');
         });
@@ -250,7 +250,7 @@ return new class extends Migration
             $table->date('summary_date');
             $table->timestamps();
             $table->unique(['view_instance_id']);
-            $table->index(['product_id', 'environment', 'summary_date']);
+            $table->index(['product_id', 'environment', 'summary_date'], 'telemetry_view_duration_summary_idx');
             $table->foreign('view_instance_id')->references('view_instance_id')->on('telemetry_views')->cascadeOnDelete();
         });
 
@@ -267,7 +267,7 @@ return new class extends Migration
             $table->string('dimensions_hash', 64)->default('');
             $table->timestamps();
             $table->unique(['product_id', 'environment', 'signal_family', 'metric_key', 'bucket_start', 'dimensions_hash'], 'telemetry_hourly_agg_unique');
-            $table->index(['product_id', 'environment', 'bucket_start']);
+            $table->index(['product_id', 'environment', 'bucket_start'], 'telemetry_hourly_bucket_idx');
         });
 
         Schema::create('telemetry_daily_aggregates', function (Blueprint $table) {
@@ -283,7 +283,7 @@ return new class extends Migration
             $table->string('dimensions_hash', 64)->default('');
             $table->timestamps();
             $table->unique(['product_id', 'environment', 'signal_family', 'metric_key', 'bucket_date', 'dimensions_hash'], 'telemetry_daily_agg_unique');
-            $table->index(['product_id', 'environment', 'bucket_date']);
+            $table->index(['product_id', 'environment', 'bucket_date'], 'telemetry_daily_bucket_idx');
         });
 
         Schema::create('telemetry_saved_analyses', function (Blueprint $table) {
