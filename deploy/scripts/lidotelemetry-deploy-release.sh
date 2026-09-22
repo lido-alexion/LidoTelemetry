@@ -22,9 +22,22 @@ tar -xzf "${archive}" -C "${release_dir}"
 ln -s "${shared_dir}/.env" "${release_dir}/.env"
 rm -rf "${release_dir}/storage"
 ln -s "${shared_dir}/storage" "${release_dir}/storage"
-mkdir -p   "${shared_dir}/storage/app/private"   "${shared_dir}/storage/app/public"   "${shared_dir}/storage/framework/cache/data"   "${shared_dir}/storage/framework/sessions"   "${shared_dir}/storage/framework/testing"   "${shared_dir}/storage/framework/views"   "${shared_dir}/storage/logs"
+mkdir -p \
+  "${shared_dir}/storage/app/private" \
+  "${shared_dir}/storage/app/public" \
+  "${shared_dir}/storage/framework/cache/data" \
+  "${shared_dir}/storage/framework/sessions" \
+  "${shared_dir}/storage/framework/testing" \
+  "${shared_dir}/storage/framework/views" \
+  "${shared_dir}/storage/logs"
 
-chmod -R ug+rwX "${shared_dir}/storage" "${release_dir}/bootstrap/cache"
+# Keep every shared storage directory group-writable and setgid. The setgid bit
+# makes new Laravel directories inherit www-data instead of the deploy user's
+# primary group, so PHP-FPM can continue writing after later deployments.
+find "${shared_dir}/storage" -type d -exec chmod 2775 {} +
+find "${shared_dir}/storage" -type f -exec chmod 664 {} +
+find "${release_dir}/bootstrap/cache" -type d -exec chmod 2775 {} +
+find "${release_dir}/bootstrap/cache" -type f -exec chmod 664 {} +
 
 cd "${release_dir}"
 php artisan config:clear
