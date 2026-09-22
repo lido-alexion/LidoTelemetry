@@ -55,13 +55,12 @@ jobs:
             app/package-lock.json
             packages/sdk-browser/package-lock.json
 
-      - name: Install and test Laravel
+      - name: Install and prepare Laravel
         working-directory: app
         run: |
           composer install --no-interaction --prefer-dist --no-progress
           cp .env.example .env
           php artisan key:generate
-          php artisan test
 
       - name: Validate clean MySQL migration without seed data
         working-directory: app
@@ -82,6 +81,10 @@ jobs:
           npm ci --registry=https://registry.npmjs.org
           npm run test:js
           npm run build
+
+      - name: Run Laravel tests
+        working-directory: app
+        run: php artisan test
 
       - name: Build browser SDK
         working-directory: packages/sdk-browser
