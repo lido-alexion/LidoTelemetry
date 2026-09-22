@@ -1,0 +1,204 @@
+name: Deploy LidoTelemetry Production
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lidotelemetry-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify application and SDKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: lidotelemetry_ci
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: curl, dom, fileinfo, mbstring, openssl, pdo_mysql, pdo_sqlite, tokenizer, xml, zip
+          coverage: none
+          tools: composer
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            packages/sdk-browser/package-lock.json
+
+      - name: Install and test Laravel
+        working-directory: app
+        run: |
+          composer install --no-interaction --prefer-dist --no-progress
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test
+
+      - name: Validate clean MySQL migration without seed data
+        working-directory: app
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: lidotelemetry_ci
+          DB_USERNAME: root
+          DB_PASSWORD: root
+        run: php artisan migrate:fresh --force
+
+      - name: Test and build admin UI
+        working-directory: app
+        env:
+          VITE_APP_BASE: /build/
+        run: |
+          npm ci --registry=https://registry.npmjs.org
+          npm run test:js
+          npm run build
+
+      - name: Build browser SDK
+        working-directory: packages/sdk-browser
+        run: |
+          npm ci --registry=https://registry.npmjs.org
+          npm run build
+
+      - name: Validate PHP SDK
+        working-directory: packages/sdk-php
+        run: |
+          composer install --no-interaction --prefer-dist --no-progress
+          composer validate --strict
+
+  package:
+    name: Package production release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: verify
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: curl, dom, fileinfo, mbstring, openssl, pdo_mysql, tokenizer, xml, zip
+          coverage: none
+          tools: composer
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install production dependencies and build
+        working-directory: app
+        env:
+          VITE_APP_BASE: /build/
+        run: |
+          composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-progress
+          npm ci --registry=https://registry.npmjs.org
+          npm run build
+
+      - name: Create release archive
+        working-directory: app
+        run: |
+          tar \
+            --exclude='./.env' \
+            --exclude='./node_modules' \
+            --exclude='./storage' \
+            --exclude='./public/storage' \
+            --exclude='./public/hot' \
+            -czf ../lidotelemetry-release.tgz .
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: lidotelemetry-release-${{ github.sha }}
+          path: lidotelemetry-release.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy to stoxla.in VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: package
+    environment: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download release archive
+        uses: actions/download-artifact@v4
+        with:
+          name: lidotelemetry-release-${{ github.sha }}
+
+      - name: Configure SSH
+        env:
+          STOXLA_HOST: ${{ secrets.STOXLA_HOST }}
+          STOXLA_SSH_PRIVATE_KEY: ${{ secrets.STOXLA_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$STOXLA_HOST"
+          test -n "$STOXLA_SSH_PRIVATE_KEY"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$STOXLA_SSH_PRIVATE_KEY" > ~/.ssh/stoxla_deploy_key
+          chmod 600 ~/.ssh/stoxla_deploy_key
+          ssh-keyscan -H "$STOXLA_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload and activate release
+        env:
+          STOXLA_HOST: ${{ secrets.STOXLA_HOST }}
+          STOXLA_SSH_USER: ${{ secrets.STOXLA_SSH_USER }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$STOXLA_HOST"
+          test -n "$STOXLA_SSH_USER"
+          RELEASE_ID="$(date -u +%Y%m%d%H%M%S)-${RELEASE_SHA::12}"
+          REMOTE_DIR="/home/${STOXLA_SSH_USER}/.lidotelemetry-deploy/${RELEASE_ID}"
+          SSH_OPTS="-i ~/.ssh/stoxla_deploy_key -o IdentitiesOnly=yes -o BatchMode=yes"
+
+          ssh $SSH_OPTS "${STOXLA_SSH_USER}@${STOXLA_HOST}" "mkdir -p '${REMOTE_DIR}'"
+          scp $SSH_OPTS lidotelemetry-release.tgz deploy/scripts/lidotelemetry-deploy-release.sh deploy/scripts/lidotelemetry-rollback-release.sh "${STOXLA_SSH_USER}@${STOXLA_HOST}:${REMOTE_DIR}/"
+          ssh $SSH_OPTS "${STOXLA_SSH_USER}@${STOXLA_HOST}" \
+            "chmod 700 '${REMOTE_DIR}/lidotelemetry-deploy-release.sh' '${REMOTE_DIR}/lidotelemetry-rollback-release.sh' && cp '${REMOTE_DIR}/lidotelemetry-rollback-release.sh' '/home/${STOXLA_SSH_USER}/.lidotelemetry-deploy/lidotelemetry-rollback-release.sh' && LIDOTELEMETRY_RELEASE_ID='${RELEASE_ID}' LIDOTELEMETRY_EXPECTED_COMMIT='${RELEASE_SHA}' '${REMOTE_DIR}/lidotelemetry-deploy-release.sh' '${REMOTE_DIR}/lidotelemetry-release.tgz'"
+
+      - name: Public health checks
+        run: |
+          curl --fail --silent --show-error --location --max-time 20 https://telemetry.stoxla.in/up >/dev/null
+          curl --fail --silent --show-error --location --max-time 20 https://telemetry.stoxla.in/ >/dev/null
+          curl --fail --silent --show-error --location --max-time 20 https://stoxla.in/ >/dev/null
