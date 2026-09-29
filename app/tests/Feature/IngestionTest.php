@@ -96,6 +96,69 @@ class IngestionTest extends TestCase
         ]);
     }
 
+    public function test_otlp_metrics_ingestion_accepts_scalar_sum_points(): void
+    {
+        $this->postJson('/api/v1/ingest/otel/v1/metrics', [
+            'resourceMetrics' => [[
+                'resource' => ['attributes' => [[
+                    'key' => 'service.name',
+                    'value' => ['stringValue' => 'stox'],
+                ]]],
+                'scopeMetrics' => [[
+                    'metrics' => [[
+                        'name' => 'stox.http.server.duration',
+                        'sum' => [
+                            'isMonotonic' => false,
+                            'dataPoints' => [[
+                                'asDouble' => 42.5,
+                                'timeUnixNano' => (string) ((int) (microtime(true) * 1_000_000_000)),
+                                'attributes' => [[
+                                    'key' => 'http.method',
+                                    'value' => ['stringValue' => 'GET'],
+                                ]],
+                            ]],
+                        ],
+                    ]],
+                ]],
+            ]],
+        ], [
+            'Authorization' => 'Bearer '.$this->ingestionToken,
+        ])->assertAccepted()->assertJsonPath('accepted', 1);
+
+        $this->assertDatabaseHas('telemetry_metrics', [
+            'name' => 'stox.http.server.duration',
+            'type' => 'sum',
+            'value' => 42.5,
+        ]);
+    }
+
+    public function test_otlp_trace_path_is_collector_compatible(): void
+    {
+        $now = (string) ((int) (microtime(true) * 1_000_000_000));
+
+        $this->postJson('/api/v1/ingest/otel/v1/traces', [
+            'resourceSpans' => [[
+                'scopeSpans' => [[
+                    'spans' => [[
+                        'traceId' => '0123456789abcdef0123456789abcdef',
+                        'spanId' => '0123456789abcdef',
+                        'name' => 'stox.test',
+                        'startTimeUnixNano' => $now,
+                        'endTimeUnixNano' => $now,
+                    ]],
+                ]],
+            ]],
+        ], [
+            'Authorization' => 'Bearer '.$this->ingestionToken,
+        ])->assertAccepted()->assertJsonPath('accepted', 1);
+
+        $this->assertDatabaseHas('telemetry_trace_spans', [
+            'trace_id' => '0123456789abcdef0123456789abcdef',
+            'span_id' => '0123456789abcdef',
+            'name' => 'stox.test',
+        ]);
+    }
+
     public function test_remote_config_returns_json(): void
     {
         $this->getJson('/api/v1/remote-config', [
