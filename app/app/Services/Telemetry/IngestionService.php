@@ -176,6 +176,61 @@ class IngestionService
     }
 
     /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function ingestOtelMetricsBatch(array $payload, string $productId, string $environment): array
+    {
+        $resourceMetrics = $payload['resourceMetrics'] ?? $payload['resource_metrics'] ?? [];
+
+        if (! is_array($resourceMetrics)) {
+            throw ValidationException::withMessages([
+                'payload' => ['Invalid OpenTelemetry metrics payload.'],
+            ]);
+        }
+
+        $metrics = [];
+
+        foreach ($resourceMetrics as $resourceMetric) {
+            $resourceAttributes = $this->otelAttributesToMap($resourceMetric['resource']['attributes'] ?? []);
+
+            foreach ($resourceMetric['scopeMetrics'] ?? $resourceMetric['scope_metrics'] ?? [] as $scopeMetric) {
+                foreach ($scopeMetric['metrics'] ?? [] as $metric) {
+                    $kind = isset($metric['gauge']) ? 'gauge' : (isset($metric['sum']) ? 'sum' : null);
+                    if ($kind === null) {
+                        continue;
+                    }
+
+                    $instrument = $metric[$kind];
+                    $type = $kind === 'gauge'
+                        ? 'gauge'
+                        : ((bool) ($instrument['isMonotonic'] ?? $instrument['is_monotonic'] ?? false) ? 'counter' : 'sum');
+
+                    foreach ($instrument['dataPoints'] ?? $instrument['data_points'] ?? [] as $point) {
+                        $value = $point['asDouble'] ?? $point['as_double'] ?? $point['asInt'] ?? $point['as_int'] ?? null;
+                        if (! is_numeric($value)) {
+                            continue;
+                        }
+
+                        $metrics[] = [
+                            'name' => (string) ($metric['name'] ?? 'unknown'),
+                            'type' => $type,
+                            'value' => (float) $value,
+                            'occurred_at' => $this->otelNanosToCarbon($point['timeUnixNano'] ?? $point['time_unix_nano'] ?? null),
+                            'dimensions' => array_merge(
+                                $resourceAttributes,
+                                $this->otelAttributesToMap($point['attributes'] ?? []),
+                            ),
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $this->ingestMetrics($metrics, $productId, $environment);
+    }
+
+    /**
      * @param  array<string, mixed>  $event
      */
     protected function materializeEvent(array $event): void
