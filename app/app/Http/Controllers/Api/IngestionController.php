@@ -89,4 +89,15 @@ class IngestionController extends Controller
 
         return response()->json($result, 202);
     }
+
+    public function otelMetrics(Request $request): JsonResponse
+    {
+        $result = $this->ingestion->ingestOtelMetricsBatch(
+            $request->all(),
+            $request->attributes->get('telemetry_product_id'),
+            $request->attributes->get('telemetry_environment'),
+        );
+
+        return response()->json($result, 202);
+    }
 }
