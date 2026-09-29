@@ -39,6 +39,8 @@ Route::prefix('v1')->group(function (): void {
             Route::post('/logs', [IngestionController::class, 'logs']);
             Route::post('/traces', [IngestionController::class, 'traces']);
             Route::post('/otel', [IngestionController::class, 'otel']);
+            Route::post('/otel/v1/traces', [IngestionController::class, 'otel']);
+            Route::post('/otel/v1/metrics', [IngestionController::class, 'otelMetrics']);
         });
     });
 
