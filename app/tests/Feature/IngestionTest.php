@@ -159,6 +159,38 @@ class IngestionTest extends TestCase
         ]);
     }
 
+    public function test_trace_batch_upserts_duplicates_and_multiple_chunks(): void
+    {
+        $spans = [];
+        for ($index = 0; $index < 61; $index++) {
+            $spans[] = [
+                'trace_id' => 'trace-bulk-'.intdiv($index, 2),
+                'span_id' => 'span-bulk-'.$index,
+                'name' => 'bulk.span.'.$index,
+                'started_at' => now()->toIso8601String(),
+                'attributes' => ['attempt' => 1],
+            ];
+        }
+
+        $this->postJson('/api/v1/ingest/traces', ['spans' => $spans], [
+            'Authorization' => 'Bearer '.$this->ingestionToken,
+        ])->assertAccepted()->assertJsonPath('accepted', 61);
+
+        $updated = $spans[0];
+        $updated['name'] = 'bulk.span.updated';
+        $updated['attributes'] = ['attempt' => 2];
+        $this->postJson('/api/v1/ingest/traces', ['spans' => [$updated]], [
+            'Authorization' => 'Bearer '.$this->ingestionToken,
+        ])->assertAccepted()->assertJsonPath('accepted', 1);
+
+        $this->assertDatabaseCount('telemetry_trace_spans', 61);
+        $this->assertDatabaseHas('telemetry_trace_spans', [
+            'trace_id' => $spans[0]['trace_id'],
+            'span_id' => $spans[0]['span_id'],
+            'name' => 'bulk.span.updated',
+        ]);
+    }
+
     public function test_remote_config_returns_json(): void
     {
         $this->getJson('/api/v1/remote-config', [
